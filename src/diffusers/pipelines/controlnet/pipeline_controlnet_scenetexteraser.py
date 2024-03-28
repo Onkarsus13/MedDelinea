@@ -105,7 +105,7 @@ EXAMPLE_DOC_STRING = """
 
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint.prepare_mask_and_masked_image
-def prepare_mask_and_masked_image(image, mask, height, width, return_image=False):
+def prepare_mask_and_masked_image(image, height, width, return_image=False):
     """
     Prepares a pair (image, mask) to be consumed by the Stable Diffusion pipeline. This means that those inputs will be
     converted to ``torch.Tensor`` with shapes ``batch x channels x height x width`` where ``channels`` is ``3`` for the
@@ -134,11 +134,6 @@ def prepare_mask_and_masked_image(image, mask, height, width, return_image=False
             dimensions: ``batch x channels x height x width``.
     """
 
-    if image is None:
-        raise ValueError("`image` input cannot be undefined.")
-
-    if mask is None:
-        raise ValueError("`mask_image` input cannot be undefined.")
 
     if isinstance(image, torch.Tensor):
         if not isinstance(mask, torch.Tensor):
@@ -150,39 +145,15 @@ def prepare_mask_and_masked_image(image, mask, height, width, return_image=False
             image = image.unsqueeze(0)
 
         # Batch and add channel dim for single mask
-        if mask.ndim == 2:
-            mask = mask.unsqueeze(0).unsqueeze(0)
 
-        # Batch single mask or add channel dim
-        if mask.ndim == 3:
-            # Single batched mask, no channel dim or single mask not batched but channel dim
-            if mask.shape[0] == 1:
-                mask = mask.unsqueeze(0)
 
-            # Batched masks no channel dim
-            else:
-                mask = mask.unsqueeze(1)
-
-        assert image.ndim == 4 and mask.ndim == 4, "Image and Mask must have 4 dimensions"
-        assert image.shape[-2:] == mask.shape[-2:], "Image and Mask must have the same spatial dimensions"
-        assert image.shape[0] == mask.shape[0], "Image and Mask must have the same batch size"
 
         # Check image is in [-1, 1]
         if image.min() < -1 or image.max() > 1:
             raise ValueError("Image should be in [-1, 1] range")
 
-        # Check mask is in [0, 1]
-        if mask.min() < 0 or mask.max() > 1:
-            raise ValueError("Mask should be in [0, 1] range")
-
-        # Binarize mask
-        mask[mask < 0.5] = 0
-        mask[mask >= 0.5] = 1
-
-        # Image as float32
         image = image.to(dtype=torch.float32)
-    elif isinstance(mask, torch.Tensor):
-        raise TypeError(f"`mask` is a torch.Tensor but `image` (type: {type(image)} is not")
+
     else:
         # preprocess image
         if isinstance(image, (PIL.Image.Image, np.ndarray)):
@@ -198,28 +169,10 @@ def prepare_mask_and_masked_image(image, mask, height, width, return_image=False
         image = image.transpose(0, 3, 1, 2)
         image = torch.from_numpy(image).to(dtype=torch.float32) / 127.5 - 1.0
 
-        # preprocess mask
-        if isinstance(mask, (PIL.Image.Image, np.ndarray)):
-            mask = [mask]
-
-        if isinstance(mask, list) and isinstance(mask[0], PIL.Image.Image):
-            mask = [i.resize((width, height), resample=PIL.Image.LANCZOS) for i in mask]
-            mask = np.concatenate([np.array(m.convert("L"))[None, None, :] for m in mask], axis=0)
-            mask = mask.astype(np.float32) / 255.0
-        elif isinstance(mask, list) and isinstance(mask[0], np.ndarray):
-            mask = np.concatenate([m[None, None, :] for m in mask], axis=0)
-
-        mask[mask < 0.5] = 0
-        mask[mask >= 0.5] = 1
-        mask = torch.from_numpy(mask)
-
-    masked_image = image * (mask < 0.5)
-
     # n.b. ensure backwards compatibility as old function does not return image
-    if return_image:
-        return mask, masked_image, image
 
-    return mask, masked_image
+
+    return image
 
 
 class StableDiffusionControlNetSceneTextErasingPipeline(
@@ -944,7 +897,7 @@ class StableDiffusionControlNetSceneTextErasingPipeline(
         self,
         # prompt: Union[str, List[str]] = None,
         image: Union[torch.Tensor, PIL.Image.Image] = None,
-        mask_image: Union[torch.Tensor, PIL.Image.Image] = None,
+        # mask_image: Union[torch.Tensor, PIL.Image.Image] = None,
         control_image: Union[
             torch.FloatTensor,
             PIL.Image.Image,
@@ -1181,8 +1134,8 @@ class StableDiffusionControlNetSceneTextErasingPipeline(
         # print(control_image.max(), control_image.min())
 
         # 4. Preprocess mask and image - resizes image and mask w.r.t height and width
-        mask, masked_image, init_image = prepare_mask_and_masked_image(
-            image, mask_image, height, width, return_image=True
+        init_image = prepare_mask_and_masked_image(
+            image, height, width, return_image=True
         )
 
         # 5. Prepare timesteps
@@ -1198,7 +1151,6 @@ class StableDiffusionControlNetSceneTextErasingPipeline(
         # 6. Prepare latent variables
         num_channels_latents = self.vae.config.latent_channels
         num_channels_unet = self.unet.config.in_channels
-        return_image_latents = num_channels_unet == 4
         latents_outputs = self.prepare_latents(
             batch_size * num_images_per_prompt,
             num_channels_latents,
@@ -1212,28 +1164,13 @@ class StableDiffusionControlNetSceneTextErasingPipeline(
             timestep=latent_timestep,
             is_strength_max=is_strength_max,
             return_noise=True,
-            return_image_latents=return_image_latents,
+            return_image_latents=True,
         )
 
-        if return_image_latents:
-            latents, noise, image_latents = latents_outputs
-        else:
-            latents, noise = latents_outputs
 
-        # 7. Prepare mask latent variables
-        mask, masked_image_latents = self.prepare_mask_latents(
-            mask,
-            init_image, # changed here to masked_image 
-            batch_size * num_images_per_prompt,
-            height,
-            width,
-            prompt_embeds.dtype,
-            device,
-            generator,
-            do_classifier_free_guidance,
-        )
+        latents, noise, image_latents = latents_outputs
 
-        # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7.1 Create tensor stating which controlnets to keep
@@ -1269,8 +1206,9 @@ class StableDiffusionControlNetSceneTextErasingPipeline(
                     cond_scale = controlnet_conditioning_scale * controlnet_keep[i]
 
                 # control_model_input = torch.cat([control_model_input, mask, masked_image_latents], dim=1)
-                control_model_input = torch.cat([control_model_input, masked_image_latents], dim=1)
+                control_model_input = torch.cat([control_model_input, image_latents], dim=1)
                 # print("check here", control_model_input.shape)
+
 
                 down_block_res_samples, mid_block_res_sample = self.controlnet(
                     control_model_input,
@@ -1289,11 +1227,6 @@ class StableDiffusionControlNetSceneTextErasingPipeline(
                     down_block_res_samples = [torch.cat([torch.zeros_like(d), d]) for d in down_block_res_samples]
                     mid_block_res_sample = torch.cat([torch.zeros_like(mid_block_res_sample), mid_block_res_sample])
 
-                # predict the noise residual
-                if num_channels_unet == 9:
-                    latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents], dim=1)
-                else:
-                    latent_model_input = torch.cat([latent_model_input, masked_image_latents], dim=1)
 
                 noise_pred = self.unet(
                     latent_model_input,
@@ -1313,17 +1246,6 @@ class StableDiffusionControlNetSceneTextErasingPipeline(
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
-                if num_channels_unet == 4:
-                    init_latents_proper = image_latents[:1]
-                    init_mask = mask[:1]
-
-                    if i < len(timesteps) - 1:
-                        noise_timestep = timesteps[i + 1]
-                        init_latents_proper = self.scheduler.add_noise(
-                            init_latents_proper, noise, torch.tensor([noise_timestep])
-                        )
-
-                    latents = (1 - init_mask) * init_latents_proper + init_mask * latents
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):

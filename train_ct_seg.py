@@ -19,7 +19,7 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from datasets import load_dataset
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel, DDIMScheduler, PNDMScheduler, ControlNetModel, UniPCMultistepScheduler
+from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel, DDPMScheduler, PNDMScheduler, ControlNetModel, UniPCMultistepScheduler
 from diffusers.optimization import get_scheduler
 from huggingface_hub import HfFolder, Repository, whoami
 from torchvision import transforms
@@ -32,36 +32,18 @@ import numpy as np
 import cv2
 from PIL import Image, ImageDraw
 import math
+import glob
 
-# os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
-def poly_to_mask(poly):
-    filee = open(poly, 'r')
-    mask = np.zeros((512, 512))
-    lines = filee.readlines()
-    for line in lines:
-        line = line.replace('\n', '')
-        line = line.split(',')
-        line = [int(i) for i in line]
-
-        polygon = line
-        width = 512
-        height = 512
-
-        img = Image.fromarray(np.zeros((512, 512), dtype='uint8'))
-        ImageDraw.Draw(img).polygon(polygon, outline=1, fill=1)
-        mask += np.array(img)
-    mask = np.expand_dims((mask > 0).astype('uint8'), axis=2)
-
-    return Image.fromarray(np.concatenate((mask, mask, mask), axis=2)*255)
 
 
 if __name__ == "__main__":
 
     accelerator = Accelerator(
-            gradient_accumulation_steps=2,
+            gradient_accumulation_steps=4,
             mixed_precision='fp16',
-            log_with='tensorboard',
+            log_with='wandb',
             # logging_dir='logs',
         )
 
@@ -89,19 +71,21 @@ if __name__ == "__main__":
         revision='fp16',
     )
 
+    controlnet = ControlNetModel.from_unet(unet)
+
     in_channels = 8
-    out_channels = unet.conv_in.out_channels
-    unet.register_to_config(in_channels=in_channels)
+    out_channels = controlnet.conv_in.out_channels
+    controlnet.register_to_config(in_channels=in_channels)
 
     with torch.no_grad():
         new_conv_in = nn.Conv2d(
-            in_channels, out_channels, unet.conv_in.kernel_size, unet.conv_in.stride, unet.conv_in.padding
+            in_channels, out_channels, controlnet.conv_in.kernel_size, controlnet.conv_in.stride, controlnet.conv_in.padding
         )
         new_conv_in.weight.zero_()
-        new_conv_in.weight[:, :4, :, :].copy_(unet.conv_in.weight)
-        unet.conv_in = new_conv_in
+        new_conv_in.weight[:, :4, :, :].copy_(controlnet.conv_in.weight)
+        controlnet.conv_in = new_conv_in
 
-    controlnet = ControlNetModel.from_unet(unet)
+    
 
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
@@ -113,31 +97,46 @@ if __name__ == "__main__":
     )
 
 
-    noise_scheduler = DDIMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
+    noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
 
     class TextRemovalDataset(Dataset):
         def __init__(self,):
             vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
-            self.images = os.listdir('../train/all_images/')
-            self.images.sort()
+            self.npys = glob.glob('/home/ec2-user/tts2/BTCV/data/BTCV/train_npz/*.npz')
             self.input_image_preprocessor = VaeImageProcessor(vae_scale_factor=vae_scale_factor)
             self.crontrol_image_preprocessor = VaeImageProcessor(
             vae_scale_factor=vae_scale_factor, do_convert_rgb=True, do_normalize=False
-        )
+            )
+            self.class_dict = {
+                    0:(0, 0, 0),
+                    1:(255, 60, 0),
+                    2:(255, 60, 32),
+                    3:(34, 79, 117),
+                    5:(117, 200, 91),
+                    6:(230, 91, 101),
+                    7:(255, 0, 155),
+                    8:(75, 105, 175)
+            }
+
+
 
         def __len__(self,):
-            return len(self.images)
+            return len(self.npys)
         
         def __getitem__(self, idx):
 
-            image = self.input_image_preprocessor.preprocess(Image.open('../train/all_images/'+self.images[idx]))
+            im = np.load(self.npys[idx])
+            image = Image.fromarray(np.uint8(im['image']*255)).convert("RGB")
+            label = Image.fromarray(onehot_to_rgb(label, self.class_dict))
 
-            label = self.input_image_preprocessor.preprocess(Image.open('../train/all_labels/'+self.images[idx]))
+            image = self.input_image_preprocessor.preprocess(image)
 
-            mask = self.crontrol_image_preprocessor.preprocess(poly_to_mask('../train/all_text/'+self.images[idx].split('.')[0]+'.txt'))
+            label = self.input_image_preprocessor.preprocess(label)
+
+            condn = self.crontrol_image_preprocessor.preprocess(image)
 
             text_ids = tokenizer(
-                'remove the scene text from the foreground',
+                'segment the medical CT-scan where ever there is ambiquity.',
                 padding="max_length",
                 max_length=tokenizer.model_max_length,
                 truncation=True,
@@ -148,9 +147,16 @@ if __name__ == "__main__":
             return {
                 'o_pixel_values':image.squeeze(0), # ct-image
                 'g_pixel_values':label.squeeze(0), # corrosponding-mask
-                'control_image':mask.squeeze(0), # if requried extra controable condition image
+                'control_image':condn.squeeze(0), # if requried extra controable condition image
                 'input_ids':text_ids['input_ids'].squeeze(0) # text ids will be fixed
             }
+
+        def onehot_to_rgb(self, onehot, color_dict):
+            onehot = np.int64(onehot)
+            output = np.zeros( onehot.shape[:2]+(3,) )
+            for k in color_dict.keys():
+                output[onehot==k] = color_dict[k]
+            return np.uint8(output)
 
 
     train_ds = TextRemovalDataset()
@@ -162,7 +168,7 @@ if __name__ == "__main__":
     lr_scheduler = get_scheduler(
             'cosine',
             optimizer=optimizer,
-            num_warmup_steps=300,
+            num_warmup_steps=1000,
             num_training_steps = epochs*num_step_loader
         )
 
@@ -192,20 +198,15 @@ if __name__ == "__main__":
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(controlnet):
                 # Convert images to latent space
-
-                # print(batch["input_ids"].shape)
+                
                 _,_,h,w = batch["g_pixel_values"].shape
                 latents = vae.encode(batch["g_pixel_values"].to(weight_dtype)).latent_dist.sample()
                 o_latent = vae.encode(batch['o_pixel_values'].to(weight_dtype)).latent_dist.sample()
                 latents = latents * 0.18215
                 o_latent = o_latent * 0.18215
 
-                mask = batch['control_image']
-                # mask = torch.nn.functional.interpolate(
-                #     mask, size=(h // vae_scale_factor, w // vae_scale_factor)
-                # )
-                
-                # Sample noise that we'll add to the latents
+                condn = batch['control_image']
+
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
                 # Sample a random timestep for each image
@@ -216,8 +217,8 @@ if __name__ == "__main__":
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                noisy_latents = torch.cat([noisy_latents, o_latent], axis=1)
-                
+                control_noisy_latents = torch.cat([noisy_latents, o_latent], axis=1)
+
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
@@ -233,10 +234,10 @@ if __name__ == "__main__":
                 # controlnet_image = batch["conditioning_pixel_values"].to(dtype=weight_dtype)
 
                 down_block_res_samples, mid_block_res_sample = controlnet(
-                        noisy_latents,
+                        control_noisy_latents,
                         timesteps,
                         encoder_hidden_states=encoder_hidden_states,
-                        controlnet_cond=mask,
+                        controlnet_cond=condn,
                         return_dict=False,
                     )
                 
@@ -253,15 +254,12 @@ if __name__ == "__main__":
                 # Predict the noise residual and compute loss
                 # model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-
-                # Gather the losses across all processes for logging (if we use distributed training).
-                # avg_loss = accelerator.gather(loss.repeat(train_batch_size)).mean()
-                # train_loss += avg_loss.item() / args.gradient_accumulation_steps
+                
 
                 # Backpropagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(controlnet.parameters(), max_norm=5.0)
+                    accelerator.clip_grad_norm_(controlnet.parameters(), max_norm=4.0)
                 
                 optimizer.step()
                 lr_scheduler.step()
@@ -278,20 +276,21 @@ if __name__ == "__main__":
             print(logs)
 
     # Create the pipeline using the trained modules and save it.
-    accelerator.wait_for_everyone()
-    if accelerator.is_main_process:
-        controlnet = accelerator.unwrap_model(controlnet)
-        p = StableDiffusionControlNetInpaintPipeline(
-                vae= vae,
-                text_encoder= text_encoder,
-                tokenizer= tokenizer,
-                unet= unet,
-                scheduler=noise_scheduler,
-                controlnet = controlnet,
-                safety_checker=None,
-                feature_extractor=None
-        )
-        p.save_pretrained('controlnet_scenetext_eraser/')
+        if epoch % 5 == 0:
+            accelerator.wait_for_everyone()
+            if accelerator.is_main_process:
+                controlnet = accelerator.unwrap_model(controlnet)
+                p = StableDiffusionControlNetInpaintPipeline(
+                        vae= vae,
+                        text_encoder= text_encoder,
+                        tokenizer= tokenizer,
+                        unet= unet,
+                        scheduler=noise_scheduler,
+                        controlnet = controlnet,
+                        safety_checker=None,
+                        feature_extractor=None
+                )
+                p.save_pretrained('/datadrive/control_DiT_CTSeg/')
 
-    # accelerator.end_training()
+    accelerator.end_training()
 

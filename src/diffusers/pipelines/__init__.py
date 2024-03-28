@@ -168,18 +168,12 @@ else:
     from .pipeline_flax_utils import FlaxDiffusionPipeline
 
 
-try:
-    if not (is_flax_available() and is_transformers_available()):
-        raise OptionalDependencyNotAvailable()
-except OptionalDependencyNotAvailable:
-    from ..utils.dummy_flax_and_transformers_objects import *  # noqa F403
-else:
-    from .controlnet import FlaxStableDiffusionControlNetPipeline
-    from .stable_diffusion import (
-        FlaxStableDiffusionImg2ImgPipeline,
-        FlaxStableDiffusionInpaintPipeline,
-        FlaxStableDiffusionPipeline,
-    )
+# try:
+#     if not (is_flax_available() and is_transformers_available()):
+#         raise OptionalDependencyNotAvailable()
+# except OptionalDependencyNotAvailable:
+#     from ..utils.dummy_flax_and_transformers_objects import *  # noqa F403
+
 try:
     if not (is_transformers_available() and is_torch_available() and is_note_seq_available()):
         raise OptionalDependencyNotAvailable()

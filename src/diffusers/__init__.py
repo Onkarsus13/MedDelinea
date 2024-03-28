@@ -247,41 +247,20 @@ except OptionalDependencyNotAvailable:
 else:
     from .pipelines import SpectrogramDiffusionPipeline
 
-try:
-    if not is_flax_available():
-        raise OptionalDependencyNotAvailable()
-except OptionalDependencyNotAvailable:
-    from .utils.dummy_flax_objects import *  # noqa F403
-else:
-    from .models.controlnet_flax import FlaxControlNetModel
-    from .models.modeling_flax_utils import FlaxModelMixin
-    from .models.unet_2d_condition_flax import FlaxUNet2DConditionModel
-    from .models.vae_flax import FlaxAutoencoderKL
-    from .pipelines import FlaxDiffusionPipeline
-    from .schedulers import (
-        FlaxDDIMScheduler,
-        FlaxDDPMScheduler,
-        FlaxDPMSolverMultistepScheduler,
-        FlaxKarrasVeScheduler,
-        FlaxLMSDiscreteScheduler,
-        FlaxPNDMScheduler,
-        FlaxSchedulerMixin,
-        FlaxScoreSdeVeScheduler,
-    )
+# try:
+#     if not is_flax_available():
+#         raise OptionalDependencyNotAvailable()
+# except OptionalDependencyNotAvailable:
+#     from .utils.dummy_flax_objects import *  # noqa F403
 
 
-try:
-    if not (is_flax_available() and is_transformers_available()):
-        raise OptionalDependencyNotAvailable()
-except OptionalDependencyNotAvailable:
-    from .utils.dummy_flax_and_transformers_objects import *  # noqa F403
-else:
-    from .pipelines import (
-        FlaxStableDiffusionControlNetPipeline,
-        FlaxStableDiffusionImg2ImgPipeline,
-        FlaxStableDiffusionInpaintPipeline,
-        FlaxStableDiffusionPipeline,
-    )
+
+# try:
+#     if not (is_flax_available() and is_transformers_available()):
+#         raise OptionalDependencyNotAvailable()
+# except OptionalDependencyNotAvailable:
+#     from .utils.dummy_flax_and_transformers_objects import *  # noqa F403
+
 
 try:
     if not (is_note_seq_available()):

@@ -1,6 +1,6 @@
 from ...utils import (
     OptionalDependencyNotAvailable,
-    is_flax_available,
+    # is_flax_available,
     is_torch_available,
     is_transformers_available,
 )
@@ -20,5 +20,4 @@ else:
     from .pipeline_controlnet_scenetexteraser import StableDiffusionControlNetSceneTextErasingPipeline
 
 
-if is_transformers_available() and is_flax_available():
-    from .pipeline_flax_controlnet import FlaxStableDiffusionControlNetPipeline
+

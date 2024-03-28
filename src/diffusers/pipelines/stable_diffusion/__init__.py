@@ -110,27 +110,3 @@ else:
     from .pipeline_onnx_stable_diffusion_inpaint_legacy import OnnxStableDiffusionInpaintPipelineLegacy
     from .pipeline_onnx_stable_diffusion_upscale import OnnxStableDiffusionUpscalePipeline
 
-if is_transformers_available() and is_flax_available():
-    import flax
-
-    @flax.struct.dataclass
-    class FlaxStableDiffusionPipelineOutput(BaseOutput):
-        """
-        Output class for Flax-based Stable Diffusion pipelines.
-
-        Args:
-            images (`np.ndarray`):
-                Denoised images of array shape of `(batch_size, height, width, num_channels)`.
-            nsfw_content_detected (`List[bool]`):
-                List indicating whether the corresponding generated image contains "not-safe-for-work" (nsfw) content
-                or `None` if safety checking could not be performed.
-        """
-
-        images: np.ndarray
-        nsfw_content_detected: List[bool]
-
-    from ...schedulers.scheduling_pndm_flax import PNDMSchedulerState
-    from .pipeline_flax_stable_diffusion import FlaxStableDiffusionPipeline
-    from .pipeline_flax_stable_diffusion_img2img import FlaxStableDiffusionImg2ImgPipeline
-    from .pipeline_flax_stable_diffusion_inpaint import FlaxStableDiffusionInpaintPipeline
-    from .safety_checker_flax import FlaxStableDiffusionSafetyChecker

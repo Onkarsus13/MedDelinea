@@ -83,6 +83,7 @@ src/diffusers/pipelines/controlnet/multicontrolnet.py
 src/diffusers/pipelines/controlnet/pipeline_controlnet.py
 src/diffusers/pipelines/controlnet/pipeline_controlnet_img2img.py
 src/diffusers/pipelines/controlnet/pipeline_controlnet_inpaint.py
+src/diffusers/pipelines/controlnet/pipeline_controlnet_scenetexteraser.py
 src/diffusers/pipelines/controlnet/pipeline_controlnet_sd_xl.py
 src/diffusers/pipelines/controlnet/pipeline_flax_controlnet.py
 src/diffusers/pipelines/dance_diffusion/__init__.py
