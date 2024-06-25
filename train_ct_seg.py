@@ -33,8 +33,10 @@ import cv2
 from PIL import Image, ImageDraw
 import math
 import glob
+import warnings
+warnings.filterwarnings('ignore')
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="2"
 
 
 
@@ -134,8 +136,10 @@ if __name__ == "__main__":
 
             self.path = path
 
-            self.images = os.lisfdir(self.path+"/images/*.png")
+            self.images = os.listdir(self.path+"/images")
+            self.labels = os.listdir(self.path+"/labels")
 
+            print(len(self.images), len(self.labels))
 
 
         def __len__(self,):
@@ -149,7 +153,7 @@ if __name__ == "__main__":
 
             l = cv2.imread(self.path+f"/labels/{name}")
             l = cv2.cvtColor(l, cv2.COLOR_BGR2RGB)
-            l = self.rgb_to_onehot(l, self.class_dict_BTCV)
+            l = self.rgb_to_onehot(l, self.class_dict_BTCV).argmax(-1)
             unique_ids = np.unique(l)
 
             image = self.input_image_preprocessor.preprocess(image)
@@ -181,7 +185,7 @@ if __name__ == "__main__":
                 output[onehot==k] = color_dict[k]
             return np.uint8(output)
 
-        def rgb_to_onehot(rgb_arr, color_dict):
+        def rgb_to_onehot(self, rgb_arr, color_dict):
             num_classes = len(color_dict)
             shape = rgb_arr.shape[:2]+(num_classes,)
             arr = np.zeros( shape, dtype=np.int8 )
@@ -307,7 +311,7 @@ if __name__ == "__main__":
             print(logs)
 
     # Create the pipeline using the trained modules and save it.
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             accelerator.wait_for_everyone()
             if accelerator.is_main_process:
                 controlnet = accelerator.unwrap_model(controlnet)

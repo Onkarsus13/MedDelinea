@@ -5,7 +5,7 @@ This is the trained model for the controlnet-DiT-stablediffusion for the CT_segm
 Installation
 
 ```
-cd Diff_SceneTextEraser
+cd DiffCTSeg
 pip install -e ".[torch]"
 pip install -e .[all,dev,notebooks]
 ```
