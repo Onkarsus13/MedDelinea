@@ -99,35 +99,58 @@ if __name__ == "__main__":
 
     noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
 
-    class TextRemovalDataset(Dataset):
-        def __init__(self,):
+    class GenMask2CT(Dataset):
+        def __init__(self, path):
             vae_scale_factor = 2 ** (len(vae.config.block_out_channels) - 1)
-            self.npys = glob.glob('/home/ec2-user/tts2/BTCV/data/BTCV/train_npz/*.npz')
             self.input_image_preprocessor = VaeImageProcessor(vae_scale_factor=vae_scale_factor)
             self.crontrol_image_preprocessor = VaeImageProcessor(
             vae_scale_factor=vae_scale_factor, do_convert_rgb=True, do_normalize=False
             )
-            self.class_dict = {
+            self.class_dict_BTCV = {
                     0:(0, 0, 0),
                     1:(255, 60, 0),
-                    2:(255, 60, 32),
-                    3:(34, 79, 117),
-                    5:(117, 200, 91),
+                    2:(255, 60, 232),
+                    3:(134, 79, 117),
+                    4:(125, 0, 190),
+                    5:(117, 200, 191),
                     6:(230, 91, 101),
                     7:(255, 0, 155),
-                    8:(75, 105, 175)
+                    8:(75, 205, 155),
+                    9:(100, 37, 200)
             }
+
+            self.class_dict = {
+                    0:"background",
+                    1:"aorta",
+                    2:"kidney_left",
+                    3:"liver",
+                    4:"postcava",
+                    5:"stomach",
+                    6:"gall_bladder",
+                    7:"kidney_right",
+                    8:"pancreas",
+                    9:"spleen"
+            }
+
+            self.path = path
+
+            self.images = os.lisfdir(self.path+"/images/*.png")
 
 
 
         def __len__(self,):
-            return len(self.npys)
+            return len(self.images)
         
         def __getitem__(self, idx):
 
-            im = np.load(self.npys[idx])
-            image = Image.fromarray(np.uint8(im['image']*255)).convert("RGB")
-            label = Image.fromarray(onehot_to_rgb(label, self.class_dict))
+            name = self.images[idx]
+            image = Image.open(self.path+f"/labels/{name}").convert("RGB").resize((256, 256))
+            label = Image.open(self.path+f"/images/{name}").convert("RGB").resize((256, 256))
+
+            l = cv2.imread(self.path+f"/labels/{name}")
+            l = cv2.cvtColor(l, cv2.COLOR_BGR2RGB)
+            l = self.rgb_to_onehot(l, self.class_dict_BTCV)
+            unique_ids = np.unique(l)
 
             image = self.input_image_preprocessor.preprocess(image)
 
@@ -136,7 +159,7 @@ if __name__ == "__main__":
             condn = self.crontrol_image_preprocessor.preprocess(image)
 
             text_ids = tokenizer(
-                'segment the medical CT-scan where ever there is ambiquity.',
+                'CT image containg '+" ".join([self.class_dict[i] for i in unique_ids]),
                 padding="max_length",
                 max_length=tokenizer.model_max_length,
                 truncation=True,
@@ -145,8 +168,8 @@ if __name__ == "__main__":
 
 
             return {
-                'o_pixel_values':image.squeeze(0), # ct-image
-                'g_pixel_values':label.squeeze(0), # corrosponding-mask
+                'o_pixel_values':image.squeeze(0), # corrosponding-mask
+                'g_pixel_values':label.squeeze(0), # ct-image
                 'control_image':condn.squeeze(0), # if requried extra controable condition image
                 'input_ids':text_ids['input_ids'].squeeze(0) # text ids will be fixed
             }
@@ -158,8 +181,16 @@ if __name__ == "__main__":
                 output[onehot==k] = color_dict[k]
             return np.uint8(output)
 
+        def rgb_to_onehot(rgb_arr, color_dict):
+            num_classes = len(color_dict)
+            shape = rgb_arr.shape[:2]+(num_classes,)
+            arr = np.zeros( shape, dtype=np.int8 )
+            for i, cls in enumerate(color_dict):
+                arr[:,:,i] = np.all(rgb_arr.reshape( (-1,3) ) == color_dict[i], axis=1).reshape(shape[:2])
+            return arr
 
-    train_ds = TextRemovalDataset()
+
+    train_ds = GenMask2CT("/data2/onkar/altasSlices")
 
     train_dataloader = DataLoader(train_ds, batch_size=8, num_workers=2, shuffle=True)
 
@@ -205,7 +236,7 @@ if __name__ == "__main__":
                 latents = latents * 0.18215
                 o_latent = o_latent * 0.18215
 
-                condn = batch['control_image']
+                condn = batch['control_image'].to(weight_dtype)
 
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
@@ -290,7 +321,6 @@ if __name__ == "__main__":
                         safety_checker=None,
                         feature_extractor=None
                 )
-                p.save_pretrained('/datadrive/control_DiT_CTSeg/')
+                p.save_pretrained('/data2/onkar/altasSlices/Mask2CT/')
 
     accelerator.end_training()
-
